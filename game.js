@@ -9,7 +9,9 @@
  * - Soft clear target: 6000
  * - Bars spawn random size (larger early; smaller more likely late); shrink until 0° then despawn
  * - Local leaderboard auto-saves on game over (default name 「玩家 HH:MM」)
- * - Initial time 30s; RMB boost = 144°/s (≈2.5s / rev)
+ * - Initial time 30s; RMB / on-screen HOLD boost = 144°/s (≈2.5s / rev)
+ * - Modes: 经典 (score/hits pace) · 加速挑战 (needle speeds up over elapsed time)
+ * - Mobile: bottom-left HOLD button for boost; responsive layout
  * - Procedural Web Audio SFX + BGM (unlock on first gesture)
  * - Starts clockwise; F9 pause
  */
@@ -53,8 +55,15 @@
   const btnStart = document.getElementById("btn-start");
 
   const btnMute = document.getElementById("btn-mute");
+  const btnBoost = document.getElementById("btn-boost");
+  const modeLabelEl = document.getElementById("mode-label");
+  const modeSelect = document.getElementById("mode-select");
   const lbList = document.getElementById("lb-list");
   const lbEmpty = document.getElementById("lb-empty");
+
+  const MODE_CLASSIC = "classic";
+  const MODE_RUSH = "rush";
+  const MODE_NAMES = { classic: "经典", rush: "加速挑战" };
 
   const LB_KEY = "ptl-leaderboard-v1";
   const LB_TOP = 10;
@@ -330,9 +339,10 @@
       return arr
         .filter((e) => e && typeof e.score === "number" && typeof e.name === "string")
         .map((e) => ({
-          name: String(e.name).slice(0, 12) || "玩家",
+          name: String(e.name).slice(0, 16) || "玩家",
           score: Math.max(0, Math.floor(e.score)),
           at: typeof e.at === "number" ? e.at : 0,
+          mode: e.mode === MODE_RUSH ? MODE_RUSH : MODE_CLASSIC,
           id: e.id || `${e.at || 0}-${e.score}`,
         }))
         .sort((a, b) => b.score - a.score || a.at - b.at)
@@ -358,15 +368,17 @@
     const d = new Date();
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
-    return `玩家 ${hh}:${mm}`;
+    const tag = MODE_NAMES[gameMode] || "经典";
+    return `${tag} ${hh}:${mm}`;
   }
 
   function addScoreEntry(name, sc) {
     const list = loadScores();
     const entry = {
-      name: (name || "玩家").trim().slice(0, 12) || "玩家",
+      name: (name || "玩家").trim().slice(0, 16) || "玩家",
       score: Math.max(0, Math.floor(sc)),
       at: Date.now(),
+      mode: gameMode,
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     };
     list.push(entry);
@@ -418,6 +430,9 @@
   let direction = 1; // +1 clockwise, -1 counter-clockwise
   let boosting = false;
   let rmbDown = false;
+  let holdBoost = false; // on-screen HOLD button
+  let gameMode = MODE_CLASSIC;
+  let elapsed = 0; // seconds since round start (for rush ramp)
   let prevButtons = 0;
   let lastPickAt = 0;
   let pickDisabledUntil = 0;
@@ -541,9 +556,15 @@
     const hard = difficulty();
     let spd;
     if (boosting) {
-      // RMB boost: one full revolution ≈ 2.5 seconds
+      // HOLD / RMB boost: one full revolution ≈ 2.5 seconds
       spd = BOOST_SPEED;
+    } else if (gameMode === MODE_RUSH) {
+      // 加速挑战: needle ramps up as the clock runs (elapsed play time)
+      // ~+3.2°/s each second → after 30s of play ≈ BASE+96, continues while blue extends time
+      const timeRamp = Math.min(260, elapsed * 3.2);
+      spd = BASE_SPEED + timeRamp + hard * 18 + hits * 0.6;
     } else {
+      // 经典: pace rises mainly with score / hits
       spd = BASE_SPEED + hard * 70 + hits * 1.4;
     }
     if (performance.now() < slowUntil) spd *= MISS_SLOW_MULT;
@@ -815,21 +836,52 @@
     updateHUD();
   }
 
+  function syncModeUi() {
+    if (modeLabelEl) modeLabelEl.textContent = MODE_NAMES[gameMode] || "经典";
+    if (modeSelect) {
+      modeSelect.querySelectorAll(".mode-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.mode === gameMode);
+      });
+    }
+    updateModeSubtitle(false);
+  }
+
+  function updateModeSubtitle(forEnd, cleared) {
+    if (!subtitleEl) return;
+    if (forEnd) {
+      subtitleEl.textContent = cleared
+        ? "已达到通关目标 6000！再冲更高分？"
+        : "再试一次，目标 6000 分。";
+      return;
+    }
+    if (gameMode === MODE_RUSH) {
+      subtitleEl.innerHTML =
+        "加速挑战：时间越久针转越快<br />" +
+        "黄 +1000 · 蓝 +1.5 秒 · 通关 6000<br />" +
+        "桌面按住右键加速 · 手机按住左下角「加速」";
+    } else {
+      subtitleEl.innerHTML =
+        "经典：转速随分数/连中略升<br />" +
+        "黄 +1000 · 蓝 +1.5 秒 · 通关 6000<br />" +
+        "桌面按住右键加速 · 手机按住左下角「加速」";
+    }
+  }
+
   function endGame() {
     running = false;
-    boosting = false;
+    holdBoost = false;
     rmbDown = false;
+    refreshBoost();
     prevButtons = 0;
     paused = false;
     pausedEl.classList.add("hidden");
+    if (btnBoost) btnBoost.setAttribute("aria-pressed", "false");
 
     const cleared = score >= CLEAR_TARGET;
     AudioFX.gameOver(cleared);
     titleEl.textContent = cleared ? "通关成功" : "时间到";
-    subtitleEl.textContent = cleared
-      ? "已达到通关目标 6000！再冲更高分？"
-      : "再试一次，目标 6000 分。";
-    finalScoreEl.textContent = `最终分数：${score}`;
+    updateModeSubtitle(true, cleared);
+    finalScoreEl.textContent = `最终分数：${score}（${MODE_NAMES[gameMode]}）`;
     finalScoreEl.classList.toggle("cleared", cleared);
     finalScoreEl.classList.remove("hidden");
     btnStart.textContent = "再来一局";
@@ -842,10 +894,12 @@
     AudioFX.unlock();
     score = 0;
     timeLeft = INITIAL_TIME;
+    elapsed = 0;
     pickAngle = -90;
     direction = 1;
-    boosting = false;
+    holdBoost = false;
     rmbDown = false;
+    refreshBoost();
     prevButtons = 0;
     pickDisabledUntil = 0;
     slowUntil = 0;
@@ -856,6 +910,7 @@
     spawnTimer = 0.15; // first bar soon after start
     paused = false;
     pausedEl.classList.add("hidden");
+    if (btnBoost) btnBoost.setAttribute("aria-pressed", "false");
     trySpawnBar();
     trySpawnBar();
     running = true;
@@ -863,6 +918,7 @@
     overlay.classList.add("hidden");
     finalScoreEl.classList.add("hidden");
     finalScoreEl.classList.remove("cleared");
+    syncModeUi();
     updateHUD();
   }
 
@@ -878,6 +934,7 @@
     lastTs = ts;
 
     if (running && !paused) {
+      elapsed += dt;
       pickAngle = normDeg(pickAngle + direction * currentSpeed() * dt);
       updateBars(dt);
 
@@ -910,13 +967,26 @@
   // LMB pick and RMB boost are independent. While RMB is held, many browsers
   // do NOT fire a second pointerdown for LMB — they only update `buttons`.
   // So: rmbDown flag for boost; pick on button===0 AND on buttons bit0 edge.
+  function refreshBoost() {
+    boosting = !!(rmbDown || holdBoost);
+    if (btnBoost) {
+      btnBoost.setAttribute("aria-pressed", holdBoost ? "true" : "false");
+    }
+  }
+
   function setBoost(on) {
     rmbDown = !!on;
-    boosting = rmbDown;
+    refreshBoost();
+  }
+
+  function setHoldBoost(on) {
+    holdBoost = !!on;
+    refreshBoost();
   }
 
   function syncBoostFromButtons(buttons) {
-    setBoost((buttons & 2) !== 0);
+    rmbDown = (buttons & 2) !== 0;
+    refreshBoost();
   }
 
   function pickFromInput() {
@@ -988,7 +1058,8 @@
   });
 
   canvas.addEventListener("pointercancel", () => {
-    setBoost(false);
+    rmbDown = false;
+    refreshBoost();
     prevButtons = 0;
   });
 
@@ -1013,7 +1084,9 @@
     if (e.button === 2) setBoost(false);
   });
   window.addEventListener("blur", () => {
-    setBoost(false);
+    rmbDown = false;
+    holdBoost = false;
+    refreshBoost();
     prevButtons = 0;
   });
 
@@ -1030,48 +1103,19 @@
     prevButtons = buttons;
   });
 
-  // Touch: one-finger tap = pick; two-finger / hold second contact = boost
-  let touchBoostId = null;
+  // Prevent page scroll/zoom on canvas; pick comes from pointer events.
+  // Boost is bottom-left HOLD button (mobile) + RMB (desktop).
   canvas.addEventListener(
     "touchstart",
     (e) => {
       e.preventDefault();
-      if (!running || paused) return;
-      if (e.touches.length >= 2) {
-        setBoost(true);
-        touchBoostId = e.touches[1].identifier;
-      } else if (e.touches.length === 1) {
-        pickFromInput();
-      }
     },
     { passive: false }
   );
   canvas.addEventListener(
-    "touchend",
+    "touchmove",
     (e) => {
       e.preventDefault();
-      if (touchBoostId != null) {
-        let still = false;
-        for (let i = 0; i < e.touches.length; i++) {
-          if (e.touches[i].identifier === touchBoostId) still = true;
-        }
-        if (!still) {
-          touchBoostId = null;
-          setBoost(false);
-        }
-      }
-      if (e.touches.length < 2) {
-        touchBoostId = null;
-        setBoost(false);
-      }
-    },
-    { passive: false }
-  );
-  canvas.addEventListener(
-    "touchcancel",
-    () => {
-      touchBoostId = null;
-      setBoost(false);
     },
     { passive: false }
   );
@@ -1088,6 +1132,43 @@
       else pickFromInput();
     }
   });
+
+  if (modeSelect) {
+    modeSelect.addEventListener("click", (e) => {
+      const btn = e.target.closest(".mode-btn");
+      if (!btn || !btn.dataset.mode) return;
+      gameMode = btn.dataset.mode === MODE_RUSH ? MODE_RUSH : MODE_CLASSIC;
+      syncModeUi();
+    });
+  }
+
+  // On-screen HOLD boost (press = boost, release = stop)
+  if (btnBoost) {
+    const holdOn = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        btnBoost.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      AudioFX.unlock();
+      if (running && !paused) setHoldBoost(true);
+      else setHoldBoost(true); // allow hold state even if not running; refreshBoost handles
+    };
+    const holdOff = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setHoldBoost(false);
+      try {
+        btnBoost.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+    };
+    btnBoost.addEventListener("pointerdown", holdOn);
+    btnBoost.addEventListener("pointerup", holdOff);
+    btnBoost.addEventListener("pointercancel", holdOff);
+    btnBoost.addEventListener("lostpointercapture", () => setHoldBoost(false));
+    // Prevent context menu / long-press callout
+    btnBoost.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
 
   btnStart.addEventListener("click", () => {
     AudioFX.unlock();
@@ -1121,6 +1202,7 @@
   trySpawnBar();
   fitCanvas();
   window.addEventListener("resize", fitCanvas);
+  syncModeUi();
   updateHUD();
   renderLeaderboard(null);
   requestAnimationFrame(tick);

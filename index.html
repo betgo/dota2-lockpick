@@ -2,7 +2,9 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <title>开锁 · Pick the Lock · Dark Carnival</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -21,6 +23,10 @@
         <span class="label">时间</span>
         <span id="time" class="value">30.0</span>
       </div>
+      <div class="hud-item mode-badge">
+        <span class="label">模式</span>
+        <span id="mode-label" class="value">经典</span>
+      </div>
     </header>
 
     <main class="stage">
@@ -29,11 +35,21 @@
         <div class="panel">
           <h1 id="title">开锁挑战</h1>
           <p id="subtitle">
-            左键开锁：针转到黄/蓝条时点击<br />
-            条块随机出现并逐渐缩小 · 黄 +1000 · 蓝 +1.5 秒<br />
-            按住右键可加速开锁 · 通关目标 6000
+            点到黄条 +1000 · 蓝条 +1.5 秒<br />
+            条块随机出现并缩小至消失<br />
+            桌面按住右键加速 · 手机按住左下角「加速」
           </p>
           <p id="final-score" class="final-score hidden"></p>
+          <div id="mode-select" class="mode-select" role="group" aria-label="模式选择">
+            <button type="button" class="mode-btn active" data-mode="classic" id="mode-classic">
+              <span class="mode-name">经典</span>
+              <span class="mode-desc">转速随分数/连中略升</span>
+            </button>
+            <button type="button" class="mode-btn" data-mode="rush" id="mode-rush">
+              <span class="mode-name">加速挑战</span>
+              <span class="mode-desc">时间越久针转越快</span>
+            </button>
+          </div>
           <div id="leaderboard" class="leaderboard" aria-label="排行榜">
             <h2>排行榜 <span class="lb-note">本机记录</span></h2>
             <ol id="lb-list"></ol>
@@ -48,12 +64,20 @@
       <div id="paused" class="paused hidden">已暂停 · F9 继续</div>
     </main>
 
+    <button
+      id="btn-boost"
+      type="button"
+      class="boost-btn"
+      aria-label="按住加速"
+      aria-pressed="false"
+    >
+      <span class="boost-title">加速</span>
+      <span class="boost-sub">按住</span>
+    </button>
+
     <footer class="hint">
-      <span>左键开锁</span>
-      <span class="sep">·</span>
-      <span>按住右键加速（约 2.5 秒一圈）</span>
-      <span class="sep">·</span>
-      <span>F9 暂停</span>
+      <span class="hint-desk">左键开锁 · 按住右键加速 · F9 暂停</span>
+      <span class="hint-mobile">点转盘开锁 · 左下角按住加速</span>
     </footer>
   </div>
   <script src="game.js"></script>
