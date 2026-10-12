@@ -7,7 +7,8 @@
  * - Hold RMB: continuous speed boost (LMB pick independent via button + buttons edge)
  * - Miss: briefly disable pick + slow the pick (not fixed time penalty)
  * - Soft clear target: 6000
- * - Bars spawn random size (larger early; smaller more likely late); shrink slowly until gone
+ * - Bars spawn random size (larger early; smaller more likely late); shrink until 0° then despawn
+ * - Local leaderboard (localStorage, this browser only)
  * - Initial time 30s; RMB boost = 144°/s (≈2.5s / rev)
  * - Procedural Web Audio SFX + BGM (unlock on first gesture)
  * - Starts clockwise; F9 pause
@@ -35,7 +36,6 @@
 
   // Random spawn + shrink-to-despawn
   const MAX_BARS = 5;
-  const MIN_BAR_SPAN = 3.2;
   const SPAWN_INTERVAL_BASE = 1.35; // seconds between spawn attempts early
   const SPAWN_INTERVAL_MIN = 0.45;
   const BAR_LIFE_MIN = 5.8; // slower shrink — bars last longer
@@ -53,6 +53,18 @@
   const btnStart = document.getElementById("btn-start");
 
   const btnMute = document.getElementById("btn-mute");
+  const lbList = document.getElementById("lb-list");
+  const lbEmpty = document.getElementById("lb-empty");
+  const nameEntry = document.getElementById("name-entry");
+  const playerNameInput = document.getElementById("player-name");
+  const btnSaveScore = document.getElementById("btn-save-score");
+  const saveHint = document.getElementById("save-hint");
+
+  const LB_KEY = "ptl-leaderboard-v1";
+  const LB_NAME_KEY = "ptl-player-name";
+  const LB_TOP = 10;
+  let pendingScore = null; // score awaiting name save after game over
+  let lastSavedId = null;
 
   // --- Procedural Web Audio (no copyrighted assets) ---
   const AudioFX = (() => {
@@ -313,6 +325,114 @@
     };
   })();
 
+
+  // --- Leaderboard (localStorage, this browser only) ---
+  function loadScores() {
+    try {
+      const raw = localStorage.getItem(LB_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .filter((e) => e && typeof e.score === "number" && typeof e.name === "string")
+        .map((e) => ({
+          name: String(e.name).slice(0, 12) || "匿名",
+          score: Math.max(0, Math.floor(e.score)),
+          at: typeof e.at === "number" ? e.at : 0,
+          id: e.id || `${e.at || 0}-${e.score}`,
+        }))
+        .sort((a, b) => b.score - a.score || a.at - b.at)
+        .slice(0, LB_TOP);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function saveScores(list) {
+    try {
+      localStorage.setItem(LB_KEY, JSON.stringify(list.slice(0, LB_TOP)));
+    } catch (_) {}
+  }
+
+  function qualifiesForBoard(sc, list) {
+    if (sc <= 0) return false;
+    if (list.length < LB_TOP) return true;
+    return sc > list[list.length - 1].score;
+  }
+
+  function addScoreEntry(name, sc) {
+    const list = loadScores();
+    const entry = {
+      name: (name || "匿名").trim().slice(0, 12) || "匿名",
+      score: Math.max(0, Math.floor(sc)),
+      at: Date.now(),
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    };
+    list.push(entry);
+    list.sort((a, b) => b.score - a.score || a.at - b.at);
+    const trimmed = list.slice(0, LB_TOP);
+    saveScores(trimmed);
+    try {
+      localStorage.setItem(LB_NAME_KEY, entry.name);
+    } catch (_) {}
+    return entry;
+  }
+
+  function renderLeaderboard(highlightId) {
+    const list = loadScores();
+    lbList.innerHTML = "";
+    if (!list.length) {
+      lbEmpty.classList.remove("hidden");
+      return;
+    }
+    lbEmpty.classList.add("hidden");
+    list.forEach((e, i) => {
+      const li = document.createElement("li");
+      if (highlightId && e.id === highlightId) li.classList.add("me");
+      li.innerHTML =
+        `<span class="rank">${i + 1}</span>` +
+        `<span class="name"></span>` +
+        `<span class="score"></span>`;
+      li.querySelector(".name").textContent = e.name;
+      li.querySelector(".score").textContent = String(e.score);
+      lbList.appendChild(li);
+    });
+  }
+
+  function showNameEntry(sc) {
+    pendingScore = sc;
+    const list = loadScores();
+    if (!qualifiesForBoard(sc, list)) {
+      nameEntry.classList.add("hidden");
+      pendingScore = null;
+      saveHint.textContent = "";
+      return;
+    }
+    nameEntry.classList.remove("hidden");
+    btnSaveScore.disabled = false;
+    saveHint.textContent = "";
+    try {
+      const prev = localStorage.getItem(LB_NAME_KEY);
+      if (prev) playerNameInput.value = prev;
+    } catch (_) {}
+  }
+
+  function hideNameEntry() {
+    nameEntry.classList.add("hidden");
+    pendingScore = null;
+    saveHint.textContent = "";
+  }
+
+  function submitScore() {
+    if (pendingScore == null) return;
+    const entry = addScoreEntry(playerNameInput.value, pendingScore);
+    lastSavedId = entry.id;
+    pendingScore = null;
+    btnSaveScore.disabled = true;
+    saveHint.textContent = "已保存到本机排行榜";
+    renderLeaderboard(lastSavedId);
+  }
+
   let running = false;
   let paused = false;
   let score = 0;
@@ -425,7 +545,7 @@
     );
   }
 
-  /** Shrink bars over lifetime; remove when too small or life gone */
+  /** Shrink bars over lifetime; despawn only when span reaches 0° */
   function updateBars(dt) {
     for (let i = bars.length - 1; i >= 0; i--) {
       const b = bars[i];
@@ -434,7 +554,7 @@
       // Near-linear shrink so bars stay readable longer (mild ease only at the end)
       const ease = t * 0.75 + t * t * 0.25;
       b.span = Math.max(0, b.initialSpan * ease);
-      if (b.life <= 0 || b.span < MIN_BAR_SPAN) {
+      if (b.span <= 0 || b.life <= 0) {
         bars.splice(i, 1);
       }
     }
@@ -444,7 +564,7 @@
     const hard = difficulty();
     let spd;
     if (boosting) {
-      // RMB boost: one full revolution ≈ 1 second
+      // RMB boost: one full revolution ≈ 2.5 seconds
       spd = BOOST_SPEED;
     } else {
       spd = BASE_SPEED + hard * 70 + hits * 1.4;
@@ -736,6 +856,9 @@
     finalScoreEl.classList.toggle("cleared", cleared);
     finalScoreEl.classList.remove("hidden");
     btnStart.textContent = "再来一局";
+    lastSavedId = null;
+    showNameEntry(score);
+    renderLeaderboard(null);
     overlay.classList.remove("hidden");
     updateHUD();
   }
@@ -765,6 +888,7 @@
     overlay.classList.add("hidden");
     finalScoreEl.classList.add("hidden");
     finalScoreEl.classList.remove("cleared");
+    hideNameEntry();
     updateHUD();
   }
 
@@ -1019,10 +1143,27 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  if (btnSaveScore) {
+    btnSaveScore.addEventListener("click", (e) => {
+      e.stopPropagation();
+      submitScore();
+    });
+  }
+  if (playerNameInput) {
+    playerNameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submitScore();
+      }
+    });
+  }
+
   trySpawnBar();
   trySpawnBar();
   fitCanvas();
   window.addEventListener("resize", fitCanvas);
   updateHUD();
+  hideNameEntry();
+  renderLeaderboard(null);
   requestAnimationFrame(tick);
 })();

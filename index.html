@@ -34,6 +34,19 @@
             按住右键可加速开锁 · 通关目标 6000
           </p>
           <p id="final-score" class="final-score hidden"></p>
+          <div id="name-entry" class="name-entry hidden">
+            <label for="player-name">留下名字上榜</label>
+            <div class="name-row">
+              <input id="player-name" type="text" maxlength="12" placeholder="玩家名" autocomplete="nickname" />
+              <button id="btn-save-score" type="button">保存</button>
+            </div>
+            <p id="save-hint" class="save-hint"></p>
+          </div>
+          <div id="leaderboard" class="leaderboard" aria-label="排行榜">
+            <h2>排行榜 <span class="lb-note">本机记录</span></h2>
+            <ol id="lb-list"></ol>
+            <p id="lb-empty" class="lb-empty hidden">暂无记录，打一局上榜吧</p>
+          </div>
           <div class="panel-actions">
             <button id="btn-start" type="button">开始</button>
             <button id="btn-mute" type="button" aria-pressed="false" title="点击静音">🔊 音效开</button>
@@ -46,7 +59,7 @@
     <footer class="hint">
       <span>左键开锁</span>
       <span class="sep">·</span>
-      <span>按住右键加速（约 2 秒一圈）</span>
+      <span>按住右键加速（约 2.5 秒一圈）</span>
       <span class="sep">·</span>
       <span>F9 暂停</span>
     </footer>
