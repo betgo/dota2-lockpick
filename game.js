@@ -7,7 +7,8 @@
  * - Hold RMB: continuous speed boost (LMB pick independent via button + buttons edge)
  * - Miss: briefly disable pick + slow the pick (not fixed time penalty)
  * - Soft clear target: 6000
- * - Bars spawn randomly over time; each shrinks until it disappears
+ * - Bars spawn random size (larger early; smaller more likely late); shrink slowly until gone
+ * - Initial time 30s; RMB boost = 360°/s (1 rev/s)
  * - Starts clockwise; F9 pause
  */
 
@@ -16,13 +17,13 @@
 
   const LOGICAL = 520;
   const CLEAR_TARGET = 6000;
-  const INITIAL_TIME = 15;
+  const INITIAL_TIME = 30;
   const YELLOW_SCORE = 1000;
   const BLUE_BONUS = 1.5;
 
-  // Slower early game — readable starting pace
+  // Base: readable pace. Boost: one full revolution ≈ 1s (360°/s)
   const BASE_SPEED = 48; // deg/s clockwise positive
-  const BOOST_MULT = 2.5;
+  const BOOST_SPEED = 360; // deg/s while RMB held — 1 rev / second
   const MISS_SLOW_MULT = 0.42;
   const MISS_DISABLE_MS = 720;
   const MISS_SLOW_MS = 1100;
@@ -36,8 +37,8 @@
   const MIN_BAR_SPAN = 3.2;
   const SPAWN_INTERVAL_BASE = 1.35; // seconds between spawn attempts early
   const SPAWN_INTERVAL_MIN = 0.45;
-  const BAR_LIFE_MIN = 3.2; // seconds until fully shrunk away
-  const BAR_LIFE_MAX = 5.8;
+  const BAR_LIFE_MIN = 5.8; // slower shrink — bars last longer
+  const BAR_LIFE_MAX = 9.5;
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
@@ -112,17 +113,29 @@
    * Try to place one random yellow/blue bar anywhere on the ring.
    * Does not clear existing bars — they accumulate until hit or shrunk away.
    */
+  /** Random bar width; early biased large, later higher chance of small */
+  function randomBarSpan(hard) {
+    const roll = Math.random();
+    // Chance to roll the "small" tier: ~12% at start → ~70% late
+    const smallChance = 0.12 + hard * 0.58;
+    const medChance = 0.28 + (1 - hard) * 0.12; // medium share shrinks a bit late
+    if (roll < smallChance) {
+      return randomRange(16, 30); // small
+    }
+    if (roll < smallChance + medChance) {
+      return randomRange(30, 48); // medium
+    }
+    // Large — overall start bigger than before
+    return randomRange(48, 78);
+  }
+
   function trySpawnBar() {
     if (bars.length >= MAX_BARS) return false;
     const hard = difficulty();
 
     for (let attempt = 0; attempt < 50; attempt++) {
       const isBlue = Math.random() < 0.28 + hard * 0.08;
-      // Wide early wedges (were ~10–18° — too thin to see/hit); still shrink over life
-      const initialSpan = isBlue
-        ? randomRange(38 - hard * 10, 55 - hard * 14)
-        : randomRange(34 - hard * 10, 50 - hard * 14);
-      const span = Math.max(18, initialSpan);
+      const span = randomBarSpan(hard);
       const center = Math.random() * 360;
 
       // Keep clear of pick tip so a brand-new bar isn't instantly under the needle
@@ -130,8 +143,8 @@
       if (barsOverlap(center, span, bars, 10)) continue;
 
       const maxLife = randomRange(
-        BAR_LIFE_MIN - hard * 0.6,
-        BAR_LIFE_MAX - hard * 1.1
+        BAR_LIFE_MIN - hard * 0.5,
+        BAR_LIFE_MAX - hard * 0.9
       );
       bars.push({
         type: isBlue ? "blue" : "yellow",
@@ -139,7 +152,7 @@
         initialSpan: span,
         span,
         life: maxLife,
-        maxLife: Math.max(2.2, maxLife),
+        maxLife: Math.max(4.0, maxLife),
       });
       return true;
     }
@@ -160,8 +173,8 @@
       const b = bars[i];
       b.life -= dt;
       const t = Math.max(0, b.life / b.maxLife);
-      // Ease shrink slightly so mid-life stays readable, then tightens
-      const ease = t * t;
+      // Near-linear shrink so bars stay readable longer (mild ease only at the end)
+      const ease = t * 0.75 + t * t * 0.25;
       b.span = Math.max(0, b.initialSpan * ease);
       if (b.life <= 0 || b.span < MIN_BAR_SPAN) {
         bars.splice(i, 1);
@@ -171,8 +184,13 @@
 
   function currentSpeed() {
     const hard = difficulty();
-    let spd = BASE_SPEED + hard * 70 + hits * 1.4;
-    if (boosting) spd *= BOOST_MULT;
+    let spd;
+    if (boosting) {
+      // RMB boost: one full revolution ≈ 1 second
+      spd = BOOST_SPEED;
+    } else {
+      spd = BASE_SPEED + hard * 70 + hits * 1.4;
+    }
     if (performance.now() < slowUntil) spd *= MISS_SLOW_MULT;
     return spd;
   }
