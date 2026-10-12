@@ -4,7 +4,7 @@
  * - Yellow bar: +1000 score
  * - Blue bar: +1.5s time
  * - Successful hit reverses pick direction
- * - Hold RMB: continuous speed boost (LMB pick still works while boosting)
+ * - Hold RMB: continuous speed boost (LMB pick independent via button + buttons edge)
  * - Miss: briefly disable pick + slow the pick (not fixed time penalty)
  * - Soft clear target: 6000
  * - Bars spawn randomly over time; each shrinks until it disappears
@@ -57,6 +57,9 @@
   let pickAngle = 0; // degrees, 0 = 3 o'clock, positive = clockwise
   let direction = 1; // +1 clockwise, -1 counter-clockwise
   let boosting = false;
+  let rmbDown = false;
+  let prevButtons = 0;
+  let lastPickAt = 0;
   let pickDisabledUntil = 0;
   let slowUntil = 0;
   let lastTs = 0;
@@ -115,15 +118,16 @@
 
     for (let attempt = 0; attempt < 50; attempt++) {
       const isBlue = Math.random() < 0.28 + hard * 0.08;
+      // Wide early wedges (were ~10–18° — too thin to see/hit); still shrink over life
       const initialSpan = isBlue
-        ? randomRange(12 - hard * 3, 18 - hard * 4)
-        : randomRange(10 - hard * 3, 16 - hard * 4);
-      const span = Math.max(6, initialSpan);
+        ? randomRange(38 - hard * 10, 55 - hard * 14)
+        : randomRange(34 - hard * 10, 50 - hard * 14);
+      const span = Math.max(18, initialSpan);
       const center = Math.random() * 360;
 
       // Keep clear of pick tip so a brand-new bar isn't instantly under the needle
-      if (inArc(pickAngle, normDeg(center - span / 2 - 10), span + 20)) continue;
-      if (barsOverlap(center, span, bars, 14)) continue;
+      if (inArc(pickAngle, normDeg(center - span / 2 - 14), span + 28)) continue;
+      if (barsOverlap(center, span, bars, 10)) continue;
 
       const maxLife = randomRange(
         BAR_LIFE_MIN - hard * 0.6,
@@ -438,6 +442,8 @@
   function endGame() {
     running = false;
     boosting = false;
+    rmbDown = false;
+    prevButtons = 0;
     paused = false;
     pausedEl.classList.add("hidden");
 
@@ -460,6 +466,8 @@
     pickAngle = -90;
     direction = 1;
     boosting = false;
+    rmbDown = false;
+    prevButtons = 0;
     pickDisabledUntil = 0;
     slowUntil = 0;
     flash = null;
@@ -519,50 +527,175 @@
     requestAnimationFrame(tick);
   }
 
-  // Left click = pick; right click hold = boost.
-  // Both can be active together: RMB boost must NOT block LMB pick.
-  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  // --- Input ---
+  // LMB pick and RMB boost are independent. While RMB is held, many browsers
+  // do NOT fire a second pointerdown for LMB — they only update `buttons`.
+  // So: rmbDown flag for boost; pick on button===0 AND on buttons bit0 edge.
+  function setBoost(on) {
+    rmbDown = !!on;
+    boosting = rmbDown;
+  }
+
+  function syncBoostFromButtons(buttons) {
+    setBoost((buttons & 2) !== 0);
+  }
+
+  function pickFromInput() {
+    const now = performance.now();
+    // Debounce double-fire from pointerdown + buttons-edge on same press
+    if (now - lastPickAt < 40) return;
+    lastPickAt = now;
+    attemptPick();
+  }
+
+  function onButtonDown(button, buttons) {
+    if (button === 2) {
+      setBoost(true);
+    }
+    // Left pick always, even if buttons===3 (RMB already held)
+    if (button === 0) {
+      pickFromInput();
+    }
+    if (typeof buttons === "number") {
+      prevButtons = buttons;
+      syncBoostFromButtons(buttons);
+    }
+  }
+
+  function onButtonUp(button, buttons) {
+    if (button === 2) {
+      setBoost(false);
+    }
+    if (typeof buttons === "number") {
+      prevButtons = buttons;
+      syncBoostFromButtons(buttons);
+    } else if (button === 2) {
+      setBoost(false);
+    }
+  }
+
+  // Kill browser context menu so RMB is free for boost
+  canvas.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  window.addEventListener("contextmenu", (e) => {
+    if (e.target === canvas) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
 
   canvas.addEventListener("pointerdown", (e) => {
     e.preventDefault();
-    if (!running || paused) return;
-
-    // Right button: start boost only (do not return before left handling —
-    // separate events fire for each button).
-    if (e.button === 2) {
-      boosting = true;
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch (_) {}
+    if (!running || paused) {
+      if (e.button === 2) setBoost(true);
       return;
     }
-
-    // Left button: always attempt pick, even while RMB is held (buttons === 3)
-    if (e.button === 0) {
-      attemptPick();
-    }
+    onButtonDown(e.button, e.buttons);
   });
 
   canvas.addEventListener("pointerup", (e) => {
-    if (e.button === 2) boosting = false;
+    onButtonUp(e.button, e.buttons);
+    // Keep capture while any button still held (RMB boost + LMB pick)
+    if (e.buttons === 0) {
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+    }
   });
 
   canvas.addEventListener("pointercancel", () => {
-    boosting = false;
+    setBoost(false);
+    prevButtons = 0;
   });
 
-  canvas.addEventListener("pointerleave", () => {
-    boosting = false;
+  // mousedown/up backup: some builds fire these for multi-button when pointer events do not
+  canvas.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    if (!running || paused) {
+      if (e.button === 2) setBoost(true);
+      return;
+    }
+    onButtonDown(e.button, e.buttons);
   });
 
+  canvas.addEventListener("mouseup", (e) => {
+    onButtonUp(e.button, e.buttons);
+  });
+
+  window.addEventListener("mouseup", (e) => {
+    if (e.button === 2) setBoost(false);
+  });
   window.addEventListener("pointerup", (e) => {
-    if (e.button === 2) boosting = false;
+    if (e.button === 2) setBoost(false);
+  });
+  window.addEventListener("blur", () => {
+    setBoost(false);
+    prevButtons = 0;
   });
 
-  // Sync boost from button bitmask in case events arrive out of order
+  // Critical path: when RMB is already held, pressing LMB often only flips
+  // buttons bit0 on move/raw update — detect rising edge of left button.
   canvas.addEventListener("pointermove", (e) => {
-    if (!running || paused) return;
-    // bit 2 = right button
-    if ((e.buttons & 2) === 2) boosting = true;
-    else if ((e.buttons & 2) === 0) boosting = false;
+    const buttons = e.buttons;
+    syncBoostFromButtons(buttons);
+    if (running && !paused) {
+      if ((buttons & 1) !== 0 && (prevButtons & 1) === 0) {
+        pickFromInput();
+      }
+    }
+    prevButtons = buttons;
   });
+
+  // Touch: one-finger tap = pick; two-finger / hold second contact = boost
+  let touchBoostId = null;
+  canvas.addEventListener(
+    "touchstart",
+    (e) => {
+      e.preventDefault();
+      if (!running || paused) return;
+      if (e.touches.length >= 2) {
+        setBoost(true);
+        touchBoostId = e.touches[1].identifier;
+      } else if (e.touches.length === 1) {
+        pickFromInput();
+      }
+    },
+    { passive: false }
+  );
+  canvas.addEventListener(
+    "touchend",
+    (e) => {
+      e.preventDefault();
+      if (touchBoostId != null) {
+        let still = false;
+        for (let i = 0; i < e.touches.length; i++) {
+          if (e.touches[i].identifier === touchBoostId) still = true;
+        }
+        if (!still) {
+          touchBoostId = null;
+          setBoost(false);
+        }
+      }
+      if (e.touches.length < 2) {
+        touchBoostId = null;
+        setBoost(false);
+      }
+    },
+    { passive: false }
+  );
+  canvas.addEventListener(
+    "touchcancel",
+    () => {
+      touchBoostId = null;
+      setBoost(false);
+    },
+    { passive: false }
+  );
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "F9") {
@@ -573,7 +706,7 @@
     if (e.code === "Space" || e.key === " ") {
       e.preventDefault();
       if (!running) startGame();
-      else attemptPick();
+      else pickFromInput();
     }
   });
 
