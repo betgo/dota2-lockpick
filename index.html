@@ -34,7 +34,10 @@
             按住右键可加速开锁 · 通关目标 6000
           </p>
           <p id="final-score" class="final-score hidden"></p>
-          <button id="btn-start" type="button">开始</button>
+          <div class="panel-actions">
+            <button id="btn-start" type="button">开始</button>
+            <button id="btn-mute" type="button" aria-pressed="false" title="点击静音">🔊 音效开</button>
+          </div>
         </div>
       </div>
       <div id="paused" class="paused hidden">已暂停 · F9 继续</div>
@@ -43,7 +46,7 @@
     <footer class="hint">
       <span>左键开锁</span>
       <span class="sep">·</span>
-      <span>按住右键加速</span>
+      <span>按住右键加速（约 2 秒一圈）</span>
       <span class="sep">·</span>
       <span>F9 暂停</span>
     </footer>

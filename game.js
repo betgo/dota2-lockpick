@@ -8,7 +8,8 @@
  * - Miss: briefly disable pick + slow the pick (not fixed time penalty)
  * - Soft clear target: 6000
  * - Bars spawn random size (larger early; smaller more likely late); shrink slowly until gone
- * - Initial time 30s; RMB boost = 360°/s (1 rev/s)
+ * - Initial time 30s; RMB boost = 180°/s (≈2s / rev)
+ * - Procedural Web Audio SFX + BGM (unlock on first gesture)
  * - Starts clockwise; F9 pause
  */
 
@@ -21,9 +22,9 @@
   const YELLOW_SCORE = 1000;
   const BLUE_BONUS = 1.5;
 
-  // Base: readable pace. Boost: one full revolution ≈ 1s (360°/s)
+  // Base: readable pace. Boost: one full revolution ≈ 2s (180°/s)
   const BASE_SPEED = 48; // deg/s clockwise positive
-  const BOOST_SPEED = 360; // deg/s while RMB held — 1 rev / second
+  const BOOST_SPEED = 180; // deg/s while RMB held — ≈2s per revolution
   const MISS_SLOW_MULT = 0.42;
   const MISS_DISABLE_MS = 720;
   const MISS_SLOW_MS = 1100;
@@ -50,6 +51,267 @@
   const subtitleEl = document.getElementById("subtitle");
   const finalScoreEl = document.getElementById("final-score");
   const btnStart = document.getElementById("btn-start");
+
+  const btnMute = document.getElementById("btn-mute");
+
+  // --- Procedural Web Audio (no copyrighted assets) ---
+  const AudioFX = (() => {
+    let ctx = null;
+    let master = null;
+    let sfxGain = null;
+    let bgmGain = null;
+    let muted = false;
+    let unlocked = false;
+    let bgmNodes = [];
+    let bgmRunning = false;
+    let pluckTimer = null;
+
+    function ensure() {
+      if (ctx) return ctx;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = 0.85;
+      master.connect(ctx.destination);
+      sfxGain = ctx.createGain();
+      sfxGain.gain.value = 0.55;
+      sfxGain.connect(master);
+      bgmGain = ctx.createGain();
+      bgmGain.gain.value = 0.14;
+      bgmGain.connect(master);
+      return ctx;
+    }
+
+    async function unlock() {
+      const c = ensure();
+      if (!c) return;
+      if (c.state === "suspended") {
+        try {
+          await c.resume();
+        } catch (_) {}
+      }
+      if (!unlocked) {
+        unlocked = true;
+        // silent blip to warm up some browsers
+        const o = c.createOscillator();
+        const g = c.createGain();
+        g.gain.value = 0.0001;
+        o.connect(g);
+        g.connect(sfxGain);
+        o.start();
+        o.stop(c.currentTime + 0.01);
+      }
+      if (!muted) startBgm();
+      syncMuteUi();
+    }
+
+    function tone(freq, dur, type, vol, when, dest) {
+      const c = ensure();
+      if (!c || muted) return;
+      const t0 = when != null ? when : c.currentTime;
+      const o = c.createOscillator();
+      const g = c.createGain();
+      o.type = type || "sine";
+      o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.001, vol), t0 + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g);
+      g.connect(dest || sfxGain);
+      o.start(t0);
+      o.stop(t0 + dur + 0.02);
+    }
+
+    function noiseBurst(dur, vol, when) {
+      const c = ensure();
+      if (!c || muted) return;
+      const t0 = when != null ? when : c.currentTime;
+      const n = Math.max(1, Math.floor(c.sampleRate * dur));
+      const buf = c.createBuffer(1, n, c.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      const g = c.createGain();
+      const f = c.createBiquadFilter();
+      f.type = "bandpass";
+      f.frequency.value = 900;
+      f.Q.value = 0.7;
+      g.gain.setValueAtTime(vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      src.connect(f);
+      f.connect(g);
+      g.connect(sfxGain);
+      src.start(t0);
+      src.stop(t0 + dur + 0.02);
+    }
+
+    function hitYellow() {
+      const c = ensure();
+      if (!c || muted) return;
+      const t = c.currentTime;
+      tone(660, 0.12, "triangle", 0.35, t);
+      tone(990, 0.18, "sine", 0.22, t + 0.04);
+      tone(1320, 0.22, "sine", 0.12, t + 0.08);
+    }
+
+    function hitBlue() {
+      const c = ensure();
+      if (!c || muted) return;
+      const t = c.currentTime;
+      tone(440, 0.14, "sine", 0.28, t);
+      tone(554, 0.2, "triangle", 0.2, t + 0.05);
+      tone(740, 0.28, "sine", 0.14, t + 0.1);
+    }
+
+    function miss() {
+      const c = ensure();
+      if (!c || muted) return;
+      const t = c.currentTime;
+      tone(180, 0.22, "sawtooth", 0.18, t);
+      tone(120, 0.28, "square", 0.1, t + 0.04);
+      noiseBurst(0.12, 0.2, t);
+    }
+
+    function gameOver(cleared) {
+      const c = ensure();
+      if (!c || muted) return;
+      const t = c.currentTime;
+      if (cleared) {
+        tone(523, 0.18, "triangle", 0.28, t);
+        tone(659, 0.2, "triangle", 0.24, t + 0.14);
+        tone(784, 0.28, "sine", 0.22, t + 0.28);
+        tone(1046, 0.4, "sine", 0.16, t + 0.42);
+      } else {
+        tone(320, 0.25, "triangle", 0.22, t);
+        tone(240, 0.35, "sine", 0.18, t + 0.18);
+        tone(160, 0.45, "sine", 0.14, t + 0.36);
+      }
+    }
+
+    function stopBgm() {
+      if (pluckTimer) {
+        clearTimeout(pluckTimer);
+        pluckTimer = null;
+      }
+      bgmNodes.forEach((n) => {
+        try {
+          n.stop();
+        } catch (_) {}
+        try {
+          n.disconnect();
+        } catch (_) {}
+      });
+      bgmNodes = [];
+      bgmRunning = false;
+    }
+
+    function startBgm() {
+      const c = ensure();
+      if (!c || muted || bgmRunning) return;
+      if (c.state === "suspended") return;
+      bgmRunning = true;
+      const t0 = c.currentTime + 0.05;
+      // Low drone + soft fifth pulse — carnival-adjacent, original
+      const drone = c.createOscillator();
+      drone.type = "sine";
+      drone.frequency.value = 55;
+      const droneG = c.createGain();
+      droneG.gain.value = 0.55;
+      drone.connect(droneG);
+      droneG.connect(bgmGain);
+      drone.start(t0);
+      bgmNodes.push(drone);
+
+      const pad = c.createOscillator();
+      pad.type = "triangle";
+      pad.frequency.value = 82.5;
+      const padG = c.createGain();
+      padG.gain.value = 0.22;
+      pad.connect(padG);
+      padG.connect(bgmGain);
+      pad.start(t0);
+      bgmNodes.push(pad);
+
+      // Slow LFO on a soft harmonic
+      const lfo = c.createOscillator();
+      lfo.type = "sine";
+      lfo.frequency.value = 0.08;
+      const lfoG = c.createGain();
+      lfoG.gain.value = 0.12;
+      const harm = c.createOscillator();
+      harm.type = "sine";
+      harm.frequency.value = 110;
+      const harmG = c.createGain();
+      harmG.gain.value = 0.18;
+      lfo.connect(lfoG);
+      lfoG.connect(harmG.gain);
+      harm.connect(harmG);
+      harmG.connect(bgmGain);
+      lfo.start(t0);
+      harm.start(t0);
+      bgmNodes.push(lfo, harm);
+
+      // Sparse soft pluck loop via scheduled tones
+      let beat = 0;
+      function schedulePlucks() {
+        if (!bgmRunning || muted || !ctx) return;
+        const now = ctx.currentTime;
+        const notes = [165, 196, 220, 196, 147, 165, 110, 147];
+        for (let i = 0; i < 4; i++) {
+          const f = notes[(beat + i) % notes.length];
+          tone(f, 0.55, "sine", 0.045, now + i * 0.9, bgmGain);
+        }
+        beat = (beat + 3) % notes.length;
+        pluckTimer = setTimeout(schedulePlucks, 3600);
+      }
+      schedulePlucks();
+    }
+
+    function setMuted(m) {
+      muted = !!m;
+      if (master) {
+        master.gain.value = muted ? 0 : 0.85;
+      }
+      if (muted) {
+        stopBgm();
+      } else if (unlocked) {
+        startBgm();
+      }
+      try {
+        localStorage.setItem("ptl-mute", muted ? "1" : "0");
+      } catch (_) {}
+      syncMuteUi();
+    }
+
+    function toggleMute() {
+      setMuted(!muted);
+    }
+
+    function syncMuteUi() {
+      if (!btnMute) return;
+      btnMute.textContent = muted ? "🔇 音效关" : "🔊 音效开";
+      btnMute.setAttribute("aria-pressed", muted ? "true" : "false");
+      btnMute.title = muted ? "点击开启音效" : "点击静音";
+    }
+
+    try {
+      if (localStorage.getItem("ptl-mute") === "1") muted = true;
+    } catch (_) {}
+    syncMuteUi();
+
+    return {
+      unlock,
+      hitYellow,
+      hitBlue,
+      miss,
+      gameOver,
+      toggleMute,
+      setMuted,
+      isMuted: () => muted,
+    };
+  })();
 
   let running = false;
   let paused = false;
@@ -437,6 +699,7 @@
       slowUntil = now + MISS_SLOW_MS;
       setFlash("red", 240);
       addFloat("失误", "#e06060");
+      AudioFX.miss();
       return;
     }
 
@@ -445,10 +708,12 @@
       score += YELLOW_SCORE;
       setFlash("yellow", 180);
       addFloat("+1000", "#f5c518");
+      AudioFX.hitYellow();
     } else {
       timeLeft += BLUE_BONUS;
       setFlash("blue", 180);
       addFloat("+1.5s", "#3aa0ff");
+      AudioFX.hitBlue();
     }
 
     bars.splice(idx, 1); // only remove the hit bar; others keep shrinking
@@ -466,6 +731,7 @@
     pausedEl.classList.add("hidden");
 
     const cleared = score >= CLEAR_TARGET;
+    AudioFX.gameOver(cleared);
     titleEl.textContent = cleared ? "通关成功" : "时间到";
     subtitleEl.textContent = cleared
       ? "已达到通关目标 6000！再冲更高分？"
@@ -479,6 +745,7 @@
   }
 
   function startGame() {
+    AudioFX.unlock();
     score = 0;
     timeLeft = INITIAL_TIME;
     pickAngle = -90;
@@ -728,7 +995,26 @@
     }
   });
 
-  btnStart.addEventListener("click", startGame);
+  btnStart.addEventListener("click", () => {
+    AudioFX.unlock();
+    startGame();
+  });
+  if (btnMute) {
+    btnMute.addEventListener("click", (e) => {
+      e.stopPropagation();
+      AudioFX.unlock();
+      AudioFX.toggleMute();
+    });
+  }
+
+  // Unlock AudioContext on first user gesture anywhere
+  const unlockOnce = () => {
+    AudioFX.unlock();
+    window.removeEventListener("pointerdown", unlockOnce, true);
+    window.removeEventListener("keydown", unlockOnce, true);
+  };
+  window.addEventListener("pointerdown", unlockOnce, true);
+  window.addEventListener("keydown", unlockOnce, true);
 
   function fitCanvas() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);

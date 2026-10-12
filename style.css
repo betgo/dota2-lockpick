@@ -146,7 +146,16 @@ html, body {
   color: #7dffb0 !important;
 }
 
-#btn-start {
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: center;
+  align-items: center;
+}
+
+#btn-start,
+#btn-mute {
   appearance: none;
   border: 1px solid var(--gold);
   background: linear-gradient(180deg, #3a2a08 0%, #1a1406 100%);
@@ -161,13 +170,29 @@ html, body {
   transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
 }
 
-#btn-start:hover {
+#btn-mute {
+  font-size: 0.88rem;
+  letter-spacing: 0.06em;
+  padding: 0.55rem 1.15rem;
+  border-color: rgba(212, 160, 23, 0.55);
+  opacity: 0.92;
+}
+
+#btn-mute[aria-pressed="true"] {
+  color: var(--muted);
+  border-color: rgba(138, 132, 144, 0.5);
+  box-shadow: none;
+}
+
+#btn-start:hover,
+#btn-mute:hover {
   transform: scale(1.04);
   box-shadow: 0 0 28px rgba(212, 160, 23, 0.5);
   background: linear-gradient(180deg, #4a3610 0%, #221808 100%);
 }
 
-#btn-start:active {
+#btn-start:active,
+#btn-mute:active {
   transform: scale(0.98);
 }
 
