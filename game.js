@@ -11,7 +11,7 @@
  * - Local leaderboard auto-saves on game over (default name 「玩家 HH:MM」)
  * - Initial time 30s; RMB / on-screen HOLD boost = 144°/s (≈2.5s / rev)
  * - Modes: 经典 (score/hits pace) · 加速挑战 (needle speeds up over elapsed time)
- * - Mobile: bottom-left HOLD button for boost; responsive layout
+ * - Mobile: bottom-left HOLD boost + bottom-right TAP pick; responsive layout
  * - Procedural Web Audio SFX + BGM (unlock on first gesture)
  * - Starts clockwise; F9 pause
  */
@@ -56,6 +56,7 @@
 
   const btnMute = document.getElementById("btn-mute");
   const btnBoost = document.getElementById("btn-boost");
+  const btnPick = document.getElementById("btn-pick");
   const modeLabelEl = document.getElementById("mode-label");
   const modeSelect = document.getElementById("mode-select");
   const lbList = document.getElementById("lb-list");
@@ -1104,7 +1105,7 @@
   });
 
   // Prevent page scroll/zoom on canvas; pick comes from pointer events.
-  // Boost is bottom-left HOLD button (mobile) + RMB (desktop).
+  // Boost: bottom-left HOLD (mobile) + RMB (desktop). Pick: bottom-right TAP (mobile) + LMB.
   canvas.addEventListener(
     "touchstart",
     (e) => {
@@ -1168,6 +1169,19 @@
     btnBoost.addEventListener("lostpointercapture", () => setHoldBoost(false));
     // Prevent context menu / long-press callout
     btnBoost.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+
+  // On-screen TAP pick (bottom-right) — same as left-click
+  if (btnPick) {
+    const tapPick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      AudioFX.unlock();
+      if (!running || paused) return;
+      pickFromInput();
+    };
+    btnPick.addEventListener("pointerdown", tapPick);
+    btnPick.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 
   btnStart.addEventListener("click", () => {
