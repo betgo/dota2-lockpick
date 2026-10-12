@@ -1,13 +1,13 @@
 /**
  * Dark Carnival · Pick the Lock
- * Authentic mechanics (Liquipedia / event guides):
+ * Authentic mechanics (Liquipedia / event guides + player corrections):
  * - Yellow bar: +1000 score
  * - Blue bar: +1.5s time
  * - Successful hit reverses pick direction
- * - Hold RMB: continuous speed boost
+ * - Hold RMB: continuous speed boost (LMB pick still works while boosting)
  * - Miss: briefly disable pick + slow the pick (not fixed time penalty)
  * - Soft clear target: 6000
- * - Bars spawn after hits; difficulty ramps with score
+ * - Bars spawn randomly over time; each shrinks until it disappears
  * - Starts clockwise; F9 pause
  */
 
@@ -20,8 +20,9 @@
   const YELLOW_SCORE = 1000;
   const BLUE_BONUS = 1.5;
 
-  const BASE_SPEED = 95; // deg/s clockwise positive
-  const BOOST_MULT = 2.35;
+  // Slower early game — readable starting pace
+  const BASE_SPEED = 48; // deg/s clockwise positive
+  const BOOST_MULT = 2.5;
   const MISS_SLOW_MULT = 0.42;
   const MISS_DISABLE_MS = 720;
   const MISS_SLOW_MS = 1100;
@@ -29,6 +30,14 @@
   const RING_OUTER = 0.9;
   const RING_INNER = 0.74;
   const PICK_LEN = 0.86;
+
+  // Random spawn + shrink-to-despawn
+  const MAX_BARS = 5;
+  const MIN_BAR_SPAN = 3.2;
+  const SPAWN_INTERVAL_BASE = 1.35; // seconds between spawn attempts early
+  const SPAWN_INTERVAL_MIN = 0.45;
+  const BAR_LIFE_MIN = 3.2; // seconds until fully shrunk away
+  const BAR_LIFE_MAX = 5.8;
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
@@ -53,8 +62,10 @@
   let lastTs = 0;
   let flash = null;
   let floatTexts = [];
-  let bars = []; // { type: 'yellow'|'blue', start, span }
+  /** @type {{ type: string, center: number, initialSpan: number, span: number, life: number, maxLife: number }[]} */
+  let bars = [];
   let hits = 0;
+  let spawnTimer = 0;
 
   function deg2rad(d) {
     return (d * Math.PI) / 180;
@@ -78,76 +89,85 @@
     return Math.min(1, score / 24000);
   }
 
+  function barStart(b) {
+    return normDeg(b.center - b.span / 2);
+  }
+
+  function barsOverlap(center, span, others, pad) {
+    const start = normDeg(center - span / 2);
+    for (const o of others) {
+      const oStart = barStart(o);
+      const gap =
+        !inArc(start, normDeg(oStart - pad), o.span + pad * 2) &&
+        !inArc(oStart, normDeg(start - pad), span + pad * 2);
+      if (!gap) return true;
+    }
+    return false;
+  }
+
   /**
-   * Spawn 1–2 narrow bars ahead of travel, not under the pick.
-   * Higher score → narrower bars, sometimes closer to pick (harder).
+   * Try to place one random yellow/blue bar anywhere on the ring.
+   * Does not clear existing bars — they accumulate until hit or shrunk away.
    */
-  function spawnBars() {
+  function trySpawnBar() {
+    if (bars.length >= MAX_BARS) return false;
     const hard = difficulty();
-    const count = Math.random() < 0.28 + hard * 0.25 ? 2 : 1;
-    const out = [];
-    const minGap = 18;
-    const aheadMin = 55 - hard * 20;
-    const aheadMax = 200 - hard * 40;
 
-    for (let n = 0; n < count; n++) {
-      let placed = false;
-      for (let attempt = 0; attempt < 60 && !placed; attempt++) {
-        const isBlue = Math.random() < 0.32;
-        const span = isBlue
-          ? randomRange(10 - hard * 3, 16 - hard * 4)
-          : randomRange(8 - hard * 3, 14 - hard * 4);
-        const clampedSpan = Math.max(4.5, span);
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const isBlue = Math.random() < 0.28 + hard * 0.08;
+      const initialSpan = isBlue
+        ? randomRange(12 - hard * 3, 18 - hard * 4)
+        : randomRange(10 - hard * 3, 16 - hard * 4);
+      const span = Math.max(6, initialSpan);
+      const center = Math.random() * 360;
 
-        // Prefer bars ahead in current travel direction
-        const ahead = randomRange(Math.max(35, aheadMin), Math.max(80, aheadMax));
-        const start = normDeg(pickAngle + direction * ahead - clampedSpan / 2);
+      // Keep clear of pick tip so a brand-new bar isn't instantly under the needle
+      if (inArc(pickAngle, normDeg(center - span / 2 - 10), span + 20)) continue;
+      if (barsOverlap(center, span, bars, 14)) continue;
 
-        // Keep clear of pick tip
-        if (inArc(pickAngle, normDeg(start - 8), clampedSpan + 16)) continue;
+      const maxLife = randomRange(
+        BAR_LIFE_MIN - hard * 0.6,
+        BAR_LIFE_MAX - hard * 1.1
+      );
+      bars.push({
+        type: isBlue ? "blue" : "yellow",
+        center: normDeg(center),
+        initialSpan: span,
+        span,
+        life: maxLife,
+        maxLife: Math.max(2.2, maxLife),
+      });
+      return true;
+    }
+    return false;
+  }
 
-        let ok = true;
-        for (const b of out) {
-          const gapOk =
-            !inArc(start, normDeg(b.start - minGap), b.span + minGap * 2) &&
-            !inArc(b.start, normDeg(start - minGap), clampedSpan + minGap * 2);
-          if (!gapOk) {
-            ok = false;
-            break;
-          }
-        }
-        if (ok) {
-          out.push({
-            type: isBlue ? "blue" : "yellow",
-            start: normDeg(start),
-            span: clampedSpan,
-          });
-          placed = true;
-        }
+  function spawnInterval() {
+    const hard = difficulty();
+    return Math.max(
+      SPAWN_INTERVAL_MIN,
+      SPAWN_INTERVAL_BASE - hard * 0.75 - hits * 0.012
+    );
+  }
+
+  /** Shrink bars over lifetime; remove when too small or life gone */
+  function updateBars(dt) {
+    for (let i = bars.length - 1; i >= 0; i--) {
+      const b = bars[i];
+      b.life -= dt;
+      const t = Math.max(0, b.life / b.maxLife);
+      // Ease shrink slightly so mid-life stays readable, then tightens
+      const ease = t * t;
+      b.span = Math.max(0, b.initialSpan * ease);
+      if (b.life <= 0 || b.span < MIN_BAR_SPAN) {
+        bars.splice(i, 1);
       }
     }
-
-    // Fallback: one yellow ahead
-    if (!out.length) {
-      const span = 12;
-      out.push({
-        type: "yellow",
-        start: normDeg(pickAngle + direction * 90 - span / 2),
-        span,
-      });
-    }
-
-    // Ensure at least some yellows overall variety: if all blue, flip one
-    if (out.every((b) => b.type === "blue")) {
-      out[0].type = "yellow";
-    }
-
-    bars = out;
   }
 
   function currentSpeed() {
     const hard = difficulty();
-    let spd = BASE_SPEED + hard * 55 + hits * 1.2;
+    let spd = BASE_SPEED + hard * 70 + hits * 1.4;
     if (boosting) spd *= BOOST_MULT;
     if (performance.now() < slowUntil) spd *= MISS_SLOW_MULT;
     return spd;
@@ -178,6 +198,7 @@
   }
 
   function drawBar(cx, cy, inner, outer, startDeg, span, type) {
+    if (span < 0.5) return;
     const a0 = deg2rad(startDeg);
     const a1 = deg2rad(startDeg + span);
     const color = type === "yellow" ? "#f5c518" : "#3aa0ff";
@@ -194,7 +215,6 @@
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = color;
     ctx.fill();
-    // bright edge
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = type === "yellow" ? "#fff3a0" : "#a8d8ff";
     ctx.stroke();
@@ -224,7 +244,7 @@
     ctx.stroke();
 
     for (const b of bars) {
-      drawBar(cx, cy, inner, outer, b.start, b.span, b.type);
+      drawBar(cx, cy, inner, outer, barStart(b), b.span, b.type);
     }
 
     if (flash && performance.now() < flash.until) {
@@ -268,7 +288,6 @@
     ctx.fillStyle = gr;
     ctx.fill();
 
-    // lock silhouette
     ctx.fillStyle = "#0c1018";
     ctx.beginPath();
     ctx.arc(cx, cy - r * 0.05, r * 0.065, 0, Math.PI * 2);
@@ -321,7 +340,6 @@
     ctx.stroke();
     ctx.restore();
 
-    // pick tip (lock-pick style wedge)
     ctx.save();
     ctx.translate(tipX, tipY);
     ctx.rotate(a + Math.PI / 2);
@@ -378,11 +396,12 @@
     drawFloats(cx, cy, r, dt);
   }
 
-  function hitBar() {
-    for (const b of bars) {
-      if (inArc(pickAngle, b.start, b.span)) return b;
+  function hitBarIndex() {
+    for (let i = 0; i < bars.length; i++) {
+      const b = bars[i];
+      if (inArc(pickAngle, barStart(b), b.span)) return i;
     }
-    return null;
+    return -1;
   }
 
   function attemptPick() {
@@ -390,9 +409,8 @@
     const now = performance.now();
     if (now < pickDisabledUntil) return;
 
-    const b = hitBar();
-    if (!b) {
-      // Miss: disable pick briefly + slow (primary penalty — not fixed time deduct)
+    const idx = hitBarIndex();
+    if (idx < 0) {
       pickDisabledUntil = now + MISS_DISABLE_MS;
       slowUntil = now + MISS_SLOW_MS;
       setFlash("red", 240);
@@ -400,6 +418,7 @@
       return;
     }
 
+    const b = bars[idx];
     if (b.type === "yellow") {
       score += YELLOW_SCORE;
       setFlash("yellow", 180);
@@ -410,9 +429,9 @@
       addFloat("+1.5s", "#3aa0ff");
     }
 
+    bars.splice(idx, 1); // only remove the hit bar; others keep shrinking
     hits += 1;
-    direction *= -1; // reverse after successful hit
-    spawnBars();
+    direction *= -1;
     updateHUD();
   }
 
@@ -438,17 +457,20 @@
   function startGame() {
     score = 0;
     timeLeft = INITIAL_TIME;
-    pickAngle = -90; // top of dial
-    direction = 1; // clockwise
+    pickAngle = -90;
+    direction = 1;
     boosting = false;
     pickDisabledUntil = 0;
     slowUntil = 0;
     flash = null;
     floatTexts = [];
     hits = 0;
+    bars = [];
+    spawnTimer = 0.15; // first bar soon after start
     paused = false;
     pausedEl.classList.add("hidden");
-    spawnBars();
+    trySpawnBar();
+    trySpawnBar();
     running = true;
     lastTs = performance.now();
     overlay.classList.add("hidden");
@@ -470,6 +492,14 @@
 
     if (running && !paused) {
       pickAngle = normDeg(pickAngle + direction * currentSpeed() * dt);
+      updateBars(dt);
+
+      spawnTimer -= dt;
+      if (spawnTimer <= 0) {
+        trySpawnBar();
+        spawnTimer = spawnInterval() * randomRange(0.75, 1.25);
+      }
+
       timeLeft -= dt;
       if (timeLeft <= 0) {
         timeLeft = 0;
@@ -480,28 +510,42 @@
         if (timeLeft <= 4) timeEl.style.color = "#e06060";
       }
     } else if (!running) {
-      pickAngle = normDeg(pickAngle + 28 * dt);
+      pickAngle = normDeg(pickAngle + 22 * dt);
+      updateBars(dt * 0.35);
+      if (bars.length < 2 && Math.random() < 0.02) trySpawnBar();
     }
 
     render(dt);
     requestAnimationFrame(tick);
   }
 
-  // Left click = pick; right click hold = boost
+  // Left click = pick; right click hold = boost.
+  // Both can be active together: RMB boost must NOT block LMB pick.
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
   canvas.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     if (!running || paused) return;
-    if (e.button === 2 || e.buttons === 2) {
+
+    // Right button: start boost only (do not return before left handling —
+    // separate events fire for each button).
+    if (e.button === 2) {
       boosting = true;
       return;
     }
-    if (e.button === 0) attemptPick();
+
+    // Left button: always attempt pick, even while RMB is held (buttons === 3)
+    if (e.button === 0) {
+      attemptPick();
+    }
   });
 
   canvas.addEventListener("pointerup", (e) => {
     if (e.button === 2) boosting = false;
+  });
+
+  canvas.addEventListener("pointercancel", () => {
+    boosting = false;
   });
 
   canvas.addEventListener("pointerleave", () => {
@@ -510,6 +554,14 @@
 
   window.addEventListener("pointerup", (e) => {
     if (e.button === 2) boosting = false;
+  });
+
+  // Sync boost from button bitmask in case events arrive out of order
+  canvas.addEventListener("pointermove", (e) => {
+    if (!running || paused) return;
+    // bit 2 = right button
+    if ((e.buttons & 2) === 2) boosting = true;
+    else if ((e.buttons & 2) === 0) boosting = false;
   });
 
   window.addEventListener("keydown", (e) => {
@@ -534,7 +586,8 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  spawnBars();
+  trySpawnBar();
+  trySpawnBar();
   fitCanvas();
   window.addEventListener("resize", fitCanvas);
   updateHUD();
