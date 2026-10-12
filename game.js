@@ -8,7 +8,7 @@
  * - Miss: briefly disable pick + slow the pick (not fixed time penalty)
  * - Soft clear target: 6000
  * - Bars spawn random size (larger early; smaller more likely late); shrink until 0° then despawn
- * - Local leaderboard (localStorage, this browser only)
+ * - Local leaderboard auto-saves on game over (default name 「玩家 HH:MM」)
  * - Initial time 30s; RMB boost = 144°/s (≈2.5s / rev)
  * - Procedural Web Audio SFX + BGM (unlock on first gesture)
  * - Starts clockwise; F9 pause
@@ -55,15 +55,9 @@
   const btnMute = document.getElementById("btn-mute");
   const lbList = document.getElementById("lb-list");
   const lbEmpty = document.getElementById("lb-empty");
-  const nameEntry = document.getElementById("name-entry");
-  const playerNameInput = document.getElementById("player-name");
-  const btnSaveScore = document.getElementById("btn-save-score");
-  const saveHint = document.getElementById("save-hint");
 
   const LB_KEY = "ptl-leaderboard-v1";
-  const LB_NAME_KEY = "ptl-player-name";
   const LB_TOP = 10;
-  let pendingScore = null; // score awaiting name save after game over
   let lastSavedId = null;
 
   // --- Procedural Web Audio (no copyrighted assets) ---
@@ -336,7 +330,7 @@
       return arr
         .filter((e) => e && typeof e.score === "number" && typeof e.name === "string")
         .map((e) => ({
-          name: String(e.name).slice(0, 12) || "匿名",
+          name: String(e.name).slice(0, 12) || "玩家",
           score: Math.max(0, Math.floor(e.score)),
           at: typeof e.at === "number" ? e.at : 0,
           id: e.id || `${e.at || 0}-${e.score}`,
@@ -360,10 +354,17 @@
     return sc > list[list.length - 1].score;
   }
 
+  function defaultPlayerName() {
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `玩家 ${hh}:${mm}`;
+  }
+
   function addScoreEntry(name, sc) {
     const list = loadScores();
     const entry = {
-      name: (name || "匿名").trim().slice(0, 12) || "匿名",
+      name: (name || "玩家").trim().slice(0, 12) || "玩家",
       score: Math.max(0, Math.floor(sc)),
       at: Date.now(),
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -372,9 +373,6 @@
     list.sort((a, b) => b.score - a.score || a.at - b.at);
     const trimmed = list.slice(0, LB_TOP);
     saveScores(trimmed);
-    try {
-      localStorage.setItem(LB_NAME_KEY, entry.name);
-    } catch (_) {}
     return entry;
   }
 
@@ -399,37 +397,16 @@
     });
   }
 
-  function showNameEntry(sc) {
-    pendingScore = sc;
+  /** Auto-record score on game over; no name prompt. */
+  function autoSaveScore(sc) {
     const list = loadScores();
     if (!qualifiesForBoard(sc, list)) {
-      nameEntry.classList.add("hidden");
-      pendingScore = null;
-      saveHint.textContent = "";
+      lastSavedId = null;
+      renderLeaderboard(null);
       return;
     }
-    nameEntry.classList.remove("hidden");
-    btnSaveScore.disabled = false;
-    saveHint.textContent = "";
-    try {
-      const prev = localStorage.getItem(LB_NAME_KEY);
-      if (prev) playerNameInput.value = prev;
-    } catch (_) {}
-  }
-
-  function hideNameEntry() {
-    nameEntry.classList.add("hidden");
-    pendingScore = null;
-    saveHint.textContent = "";
-  }
-
-  function submitScore() {
-    if (pendingScore == null) return;
-    const entry = addScoreEntry(playerNameInput.value, pendingScore);
+    const entry = addScoreEntry(defaultPlayerName(), sc);
     lastSavedId = entry.id;
-    pendingScore = null;
-    btnSaveScore.disabled = true;
-    saveHint.textContent = "已保存到本机排行榜";
     renderLeaderboard(lastSavedId);
   }
 
@@ -856,9 +833,7 @@
     finalScoreEl.classList.toggle("cleared", cleared);
     finalScoreEl.classList.remove("hidden");
     btnStart.textContent = "再来一局";
-    lastSavedId = null;
-    showNameEntry(score);
-    renderLeaderboard(null);
+    autoSaveScore(score);
     overlay.classList.remove("hidden");
     updateHUD();
   }
@@ -888,7 +863,6 @@
     overlay.classList.add("hidden");
     finalScoreEl.classList.add("hidden");
     finalScoreEl.classList.remove("cleared");
-    hideNameEntry();
     updateHUD();
   }
 
@@ -1143,27 +1117,11 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  if (btnSaveScore) {
-    btnSaveScore.addEventListener("click", (e) => {
-      e.stopPropagation();
-      submitScore();
-    });
-  }
-  if (playerNameInput) {
-    playerNameInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        submitScore();
-      }
-    });
-  }
-
   trySpawnBar();
   trySpawnBar();
   fitCanvas();
   window.addEventListener("resize", fitCanvas);
   updateHUD();
-  hideNameEntry();
   renderLeaderboard(null);
   requestAnimationFrame(tick);
 })();
