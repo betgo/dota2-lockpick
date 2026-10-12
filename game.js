@@ -8,7 +8,7 @@
  * - Miss: briefly disable pick + slow the pick (not fixed time penalty)
  * - Soft clear target: 6000
  * - Bars spawn random size (larger early; smaller more likely late); shrink slowly until gone
- * - Initial time 30s; RMB boost = 180°/s (≈2s / rev)
+ * - Initial time 30s; RMB boost = 144°/s (≈2.5s / rev)
  * - Procedural Web Audio SFX + BGM (unlock on first gesture)
  * - Starts clockwise; F9 pause
  */
@@ -22,9 +22,9 @@
   const YELLOW_SCORE = 1000;
   const BLUE_BONUS = 1.5;
 
-  // Base: readable pace. Boost: one full revolution ≈ 2s (180°/s)
+  // Base: readable pace. Boost: one full revolution ≈ 2.5s (144°/s)
   const BASE_SPEED = 48; // deg/s clockwise positive
-  const BOOST_SPEED = 180; // deg/s while RMB held — ≈2s per revolution
+  const BOOST_SPEED = 144; // deg/s while RMB held — ≈2.5s per revolution
   const MISS_SLOW_MULT = 0.42;
   const MISS_DISABLE_MS = 720;
   const MISS_SLOW_MS = 1100;
@@ -375,20 +375,16 @@
    * Try to place one random yellow/blue bar anywhere on the ring.
    * Does not clear existing bars — they accumulate until hit or shrunk away.
    */
-  /** Random bar width; early biased large, later higher chance of small */
+  /** Random bar width; early ~34–40°, later higher chance of small */
   function randomBarSpan(hard) {
     const roll = Math.random();
     // Chance to roll the "small" tier: ~12% at start → ~70% late
     const smallChance = 0.12 + hard * 0.58;
-    const medChance = 0.28 + (1 - hard) * 0.12; // medium share shrinks a bit late
     if (roll < smallChance) {
-      return randomRange(16, 30); // small
+      return randomRange(18, 30); // small (more common late)
     }
-    if (roll < smallChance + medChance) {
-      return randomRange(30, 48); // medium
-    }
-    // Large — overall start bigger than before
-    return randomRange(48, 78);
+    // Default / early: roughly 34–40°
+    return randomRange(34, 40);
   }
 
   function trySpawnBar() {
