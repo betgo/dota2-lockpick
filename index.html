@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>开锁 · Pick the Lock · Dark Carnival</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="hud">
+      <div class="hud-item">
+        <span class="label">分数</span>
+        <span id="score" class="value">0</span>
+      </div>
+      <div class="hud-item target">
+        <span class="label">通关目标</span>
+        <span id="target" class="value">6000</span>
+      </div>
+      <div class="hud-item">
+        <span class="label">时间</span>
+        <span id="time" class="value">15.0</span>
+      </div>
+    </header>
+
+    <main class="stage">
+      <canvas id="game" width="520" height="520" aria-label="开锁转盘"></canvas>
+      <div id="overlay" class="overlay">
+        <div class="panel">
+          <h1 id="title">开锁挑战</h1>
+          <p id="subtitle">
+            左键开锁：针转到高亮条时点击<br />
+            黄条 +1000 分 · 蓝条 +1.5 秒<br />
+            按住右键加速 · 通关目标 6000
+          </p>
+          <p id="final-score" class="final-score hidden"></p>
+          <button id="btn-start" type="button">开始</button>
+        </div>
+      </div>
+      <div id="paused" class="paused hidden">已暂停 · F9 继续</div>
+    </main>
+
+    <footer class="hint">
+      <span>左键开锁</span>
+      <span class="sep">·</span>
+      <span>按住右键加速</span>
+      <span class="sep">·</span>
+      <span>F9 暂停</span>
+    </footer>
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>
