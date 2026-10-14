@@ -349,7 +349,7 @@ html, body {
   opacity: 0.55;
 }
 
-/* Bottom-right TAP pick (mobile + desktop touch) */
+/* Bottom-right PRESS pick (mobile + desktop touch) — activate on down */
 .pick-btn {
   position: fixed;
   right: calc(0.85rem + var(--safe-right, 0px));
@@ -374,6 +374,8 @@ html, body {
   touch-action: manipulation;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
   transition: transform 0.08s, box-shadow 0.08s, border-color 0.08s, background 0.08s;
   opacity: 0.92;
 }

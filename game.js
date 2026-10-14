@@ -11,7 +11,8 @@
  * - Local leaderboard auto-saves on game over (default name 「玩家 HH:MM」)
  * - Initial time 30s; RMB / on-screen HOLD boost = 144°/s (≈2.5s / rev)
  * - Modes: 经典 (score/hits pace) · 加速挑战 (needle speeds up over elapsed time)
- * - Mobile: bottom-left HOLD boost + bottom-right TAP pick; responsive layout
+ * - Mobile: bottom-left HOLD boost + bottom-right PRESS pick; responsive layout
+ * - Pick fires on pointer/mouse DOWN (press), never on release/up/click
  * - Procedural Web Audio SFX + BGM (unlock on first gesture)
  * - Starts clockwise; F9 pause
  */
@@ -1036,6 +1037,7 @@
     }
   });
 
+  // Desktop: LMB pick on DOWN (pointerdown/mousedown). Never on up/click.
   canvas.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     try {
@@ -1049,6 +1051,7 @@
   });
 
   canvas.addEventListener("pointerup", (e) => {
+    // Release only ends boost / capture — does NOT pick
     onButtonUp(e.button, e.buttons);
     // Keep capture while any button still held (RMB boost + LMB pick)
     if (e.buttons === 0) {
@@ -1092,9 +1095,8 @@
   });
 
   // Critical path: when RMB is already held, pressing LMB often only flips
-  // buttons bit0 on move/raw update — detect rising edge of left button.
-  canvas.addEventListener("pointermove", (e) => {
-    const buttons = e.buttons;
+  // buttons bit0 on move/raw update — detect rising edge of left button (still DOWN).
+  function onButtonsSample(buttons) {
     syncBoostFromButtons(buttons);
     if (running && !paused) {
       if ((buttons & 1) !== 0 && (prevButtons & 1) === 0) {
@@ -1102,10 +1104,19 @@
       }
     }
     prevButtons = buttons;
+  }
+  canvas.addEventListener("pointermove", (e) => {
+    onButtonsSample(e.buttons);
   });
+  // Chrome: button mask updates without move while RMB held
+  if (typeof PointerEvent !== "undefined" && "onpointerrawupdate" in window) {
+    canvas.addEventListener("pointerrawupdate", (e) => {
+      onButtonsSample(e.buttons);
+    });
+  }
 
-  // Prevent page scroll/zoom on canvas; pick comes from pointer events.
-  // Boost: bottom-left HOLD (mobile) + RMB (desktop). Pick: bottom-right TAP (mobile) + LMB.
+  // Prevent page scroll/zoom on canvas; pick comes from pointer DOWN.
+  // Boost: bottom-left HOLD (mobile) + RMB (desktop). Pick: bottom-right PRESS (mobile) + LMB DOWN.
   canvas.addEventListener(
     "touchstart",
     (e) => {
@@ -1171,16 +1182,27 @@
     btnBoost.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 
-  // On-screen TAP pick (bottom-right) — same as left-click
+  // On-screen PRESS pick (bottom-right) — same as left-click DOWN
+  // Fire on down only; swallow click so OS "activate on release" never picks.
   if (btnPick) {
-    const tapPick = (e) => {
+    const pressPick = (e) => {
       e.preventDefault();
       e.stopPropagation();
       AudioFX.unlock();
       if (!running || paused) return;
       pickFromInput();
     };
-    btnPick.addEventListener("pointerdown", tapPick);
+    btnPick.addEventListener("pointerdown", pressPick);
+    btnPick.addEventListener("mousedown", pressPick);
+    btnPick.addEventListener(
+      "touchstart",
+      pressPick,
+      { passive: false }
+    );
+    btnPick.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
     btnPick.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 
